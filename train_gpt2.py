@@ -1,8 +1,12 @@
+import os
+import math
+import time
+import inspect
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import math
+from hellaswag import render_example, iterate_examples
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
@@ -87,6 +91,23 @@ class GPTConfig:
             ))
             self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False) #final classifier, language model head
 
+        def forward(self, idx):
+            #idx is of shape (B, T)
+            B, T = idx.size()
+            assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+            #forward the token and position embessings
+            pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+            pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+            tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
+            x = tok_emb + pos_emb
+            # forward the blocks of the transformer
+            for block in self.transformer.h:
+                x = block(x)
+            #forward the final layernorm and the classifier
+            x = self.transformer.ln_f(x)
+            logits = self.lm_head(x) # (B, T, vocab_size)
+            return logits
+
         @classmethod
         def from_pretrained(cls, model_type):
             """Loads pretrained GPT-2 model weights from huggingface"""
@@ -99,7 +120,7 @@ class GPTConfig:
                 'gpt2': dict(n_layer=12, n_head=12, n_embd=768), #124 params
                 'gpt2-medium': dict(n_layer=24, n_head=16, n_embd=1024), #350 params
                 'gpt2-large': dict(n_layer=36, n_head=20, n_embd=1280), #774 params
-                'gpt2-xl': dict(n_layer=48, n_head=25, n_embd=1600) #1558M par[ams
+                'gpt2-xl': dict(n_layer=48, n_head=25, n_embd=1600) #1558M params
             }[model_type]
             config_args['vocab_size'] = 50257 #always 50257 for GPT model checkpoints
             config_args['block_size'] = 1024 #always 1024 for GPT model checkpoints
@@ -136,3 +157,18 @@ class GPTConfig:
                         sd[k].copy_(sd_hf[k])
 
             return model
+
+#-------------------------------------------------------------------------#
+num_return_sequences = 5
+max_length = 30
+
+model = GPT.from_pretrained('gpt2')
+model.eval()
+model.to('cuda')
+
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long) #(8, )
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) #(5, 8)
+x = tokens.to('cuda')
