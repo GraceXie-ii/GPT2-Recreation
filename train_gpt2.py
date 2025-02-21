@@ -92,7 +92,7 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
         # idx is of shape (B, T)
         B, T = idx.size()
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
@@ -107,7 +107,10 @@ class GPT(nn.Module):
         # forward the final layernorm and the classifier
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
-        return logits
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -169,17 +172,23 @@ text = text[:1000]
 tokens = enc.encode(text)
 B, T = 4, 32
 buf = torch.tensor(tokens[:B*T + 1])
+buf = buf.to('cpu')
 x = buf[:-1].view(B, T)
 y = buf[1:].view(B, T)
 
 # get logits
-
-# model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
 model.to('cpu')
-logits = model(x)
 
-print(logits.shape)
+#optimizer !
+optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+for i in range(50):
+    optimizer.zero_grad() #Must set to 0 since .backward() will accumulate gradients
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step {i}, loss: {loss.item()}") #Loss.item will convert to a float and lives on cpu :(
+
 import sys; sys.exit(0)
 
 # prefix tokens
