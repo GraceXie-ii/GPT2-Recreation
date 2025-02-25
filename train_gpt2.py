@@ -231,6 +231,7 @@ for i in range(50):
     x, y = x.to('cpu'), y.to('cpu')
     optimizer.zero_grad() #Must set to 0 since .backward() will accumulate gradients
     logits, loss = model(x, y)
+    import code; code.interact(local=locals())
     loss.backward()
     optimizer.step()
     print(f"step {i}, loss: {loss.item()}") #Loss.item will convert to a float and lives on cpu :(
